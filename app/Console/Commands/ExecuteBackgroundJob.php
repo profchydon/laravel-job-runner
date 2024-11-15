@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\JobLog;
 use Exception;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
@@ -14,7 +15,7 @@ class ExecuteBackgroundJob extends Command
      *
      * @var string
      */
-    protected $signature = 'app:execute-background-job {class} {method} {--parameters=*} {--maxRetries=3}';
+    protected $signature = 'app:execute-background-job {class} {method} {--parameters=*} {--maxRetries=3} {--delay=0} {--priority=normal}';
 
     /**
      * The console command description.
@@ -48,10 +49,30 @@ class ExecuteBackgroundJob extends Command
         $methodName = $this->argument('method');
         $parameters = array_map('trim', explode(',', $this->option('parameters')[0]));
         $maxRetries = (int) $this->option('maxRetries');
+        $delay = (int) $this->option('delay');
+        $priority = $this->option('priority');
+
+        // Delay execution if specified
+        if ($delay > 0) {
+            Log::channel('background_jobs')->info("Delaying job execution for {$delay} seconds.", [
+                'class' => $className,
+                'method' => $methodName,
+                'parameters' => $parameters,
+                'timestamp' => Carbon::now()->toDateTimeString(),
+            ]);
+            sleep($delay);
+        }
+
+        // Create a job log entry
+        $jobLog = JobLog::create([
+            'class_name' => $className,
+            'method_name' => $methodName,
+            'parameters' => json_encode($parameters),
+            'status' => 'pending',
+        ]);
 
         // Check if the class and method are approved for execution
         if (!$this->isClassApproved($className, $methodName)) {
-
             Log::channel('background_jobs_errors')->error("Execution Failed: Unauthorized class attempted to run: $className", [
                 'class' => $className,
                 'method' => $methodName,
@@ -74,10 +95,10 @@ class ExecuteBackgroundJob extends Command
 
         // Loop until the job is successful or the maximum number of attempts is reached
         while ($attempt < $maxRetries) {
-
             try {
                 // Increment the attempt number
                 $attempt++;
+                $jobLog->update(['status' => 'running', 'retry_count' => $attempt]);
 
                 // Check if the class exists
                 if (!class_exists($className)) {
@@ -108,7 +129,6 @@ class ExecuteBackgroundJob extends Command
 
                 // Check if the method exists on the instance
                 if (!method_exists($instance, $methodName)) {
-
                     Log::channel('background_jobs_errors')->error("Execution Failed: Method $methodName does not exist on $className.", [
                         'class' => $className,
                         'method' => $methodName,
@@ -122,7 +142,8 @@ class ExecuteBackgroundJob extends Command
                 // Call the method on the instance with the provided parameters
                 call_user_func_array([$instance, $methodName], $parameters);
 
-                // Log that the job has been completed successfully
+                // Log successful execution
+                $jobLog->update(['status' => 'completed']);
                 Log::channel('background_jobs')->info("Execution Successful: Job completed: $className::$methodName.", [
                     'class' => $className,
                     'method' => $methodName,
@@ -134,7 +155,14 @@ class ExecuteBackgroundJob extends Command
                 // Return a success code
                 return 0;
             } catch (Exception $e) {
-                // Log the error
+                // Update the job log with failure status and error message
+                $jobLog->update([
+                    'status' => 'failed',
+                    'error_message' => $e->getMessage(),
+                    'retry_count' => $attempt,
+                ]);
+
+                // Log the error with details
                 Log::channel('background_jobs_errors')->error("Execution Failed: Error in job $className::$methodName - Attempt $attempt: " . $e->getMessage(), [
                     'class' => $className,
                     'method' => $methodName,
@@ -154,10 +182,11 @@ class ExecuteBackgroundJob extends Command
             'timestamp' => Carbon::now()->toDateTimeString(),
         ]);
 
-         // Add exponential backoff (delay before retrying)
-         sleep(pow(2, $attempt));
+        // Add exponential backoff (delay before retrying)
+        sleep(pow(2, $attempt));
 
-        // Return a failure code
+        // Log the final failure and return a failure code
+        $this->logFailure($jobLog, "Job failed after {$maxRetries} attempts.");
         return 1;
     }
 
@@ -172,5 +201,11 @@ class ExecuteBackgroundJob extends Command
     {
         // Check if the class is in the approved classes list and if the method is valid for that class
         return isset($this->approvedClasses[$className]) && in_array($methodName, $this->approvedClasses[$className]);
+    }
+
+    private function logFailure(JobLog $jobLog, string $message)
+    {
+        $jobLog->update(['status' => 'failed', 'error_message' => $message]);
+        Log::error($message);
     }
 }

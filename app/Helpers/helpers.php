@@ -20,7 +20,7 @@ if (!function_exists('runBackgroundJob')) {
      * @throws \InvalidArgumentException
      * @throws \RuntimeException
      */
-    function runBackgroundJob(string $class, string $method, array $parameters = [], int $maxRetries = 3): void
+    function runBackgroundJob(string $class, string $method, array $parameters = [], int $maxRetries = 3, int $delay = 0, int $priority = 0): void
     {
         // Validate class parameter
         if ($class === null) throw new \InvalidArgumentException('Class cannot be null');
@@ -53,6 +53,14 @@ if (!function_exists('runBackgroundJob')) {
 
         // Append the maximum retry count to the command array
         $command[] = "--maxRetries=" . $maxRetries;
+
+        // If delay is provided, append to the command
+        if ($delay > 0) {
+            $command[] = "--delay=" . $delay;
+        }
+
+        // Append the priority
+        $command[] = "--priority=" . $priority;
 
         try {
 
