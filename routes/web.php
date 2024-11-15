@@ -3,5 +3,5 @@
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
-    return view('welcome');
+    runBackgroundJob('App\\Jobs\\ArithmeticJob', 'handle', [5, 10, 'add'], 3);
 });
