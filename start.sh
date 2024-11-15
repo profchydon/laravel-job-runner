@@ -2,12 +2,20 @@
 
 echo "Starting Laravel Sail with PostgreSQL setup..."
 
+# Copy env.example to .env if it doesn't exist
+if [ ! -f .env ]; then
+    echo "Copying env.example to .env..."
+    cp .env.example .env
+else
+    echo ".env file already exists. Skipping copy."
+fi
+
 # Ensure Sail is installed
-# if ! [ -x "$(command -v sail)" ]; then
-#     echo "Sail is not installed. Installing Sail..."
-#     composer require laravel/sail --dev
-#     php artisan sail:install
-# fi
+if ! [ -x "$(command -v sail)" ]; then
+    echo "Sail is not installed. Installing Sail..."
+    composer require laravel/sail --dev
+    php artisan sail:install
+fi
 
 # Bring up Docker containers
 echo "Bringing up Docker containers..."
